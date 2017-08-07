@@ -1,12 +1,13 @@
 id: { pkgs, ... }: let
   flood = import ./flood.nix pkgs;
   bash      = "/run/current-system/sw/bin/bash";
+  chmod     = "/run/current-system/sw/bin/chmod";
   userID    = 40000 + id;
   peerPort  = 40000 + id;
   dhtPort   = 41000 + id;
   floodPort = 42000 + id;
   user = "rtorrent-${toString id}";
-  rpcSocket = "/home/${user}/rtorrent.sock";
+  rpcSocket = "/tmp/rtorrent-${toString id}.sock";
   session   = "/home/${user}/rtorrent.dtach";
   pidFile   = "/home/${user}/rtorrent.pid";
   rtorrentRC = pkgs.writeText "rtorrent.rc" ''
@@ -23,6 +24,7 @@ id: { pkgs, ... }: let
     dht.mode.set                          = on
     dht.port.set                          = ${toString dhtPort}
     schedule2 = dht_add_node, 0, 0, "dht.add_node=router.bittorrent.com"
+    schedule2 = scgi_set_permission, 0, 0, "execute.nothrow = ${chmod}, \"g+w,o=\", ${rpcSocket}"
     execute.nothrow = ${bash}, -c, (cat, "echo -n > ${pidFile} ", (system.pid))
   '';
 in {
