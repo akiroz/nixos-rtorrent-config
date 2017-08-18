@@ -1,18 +1,17 @@
-id: { pkgs, ... }: let
+{ id, enable }: { pkgs, ... }: let
   flood = import ./flood.nix pkgs;
-  bash      = "/run/current-system/sw/bin/bash";
-  chmod     = "/run/current-system/sw/bin/chmod";
-  userID    = 40000 + id;
-  peerPort  = 40000 + id;
-  dhtPort   = 41000 + id;
-  floodPort = 42000 + id;
-  user = "rtorrent-${toString id}";
-  rpcSocket = "/tmp/rtorrent-${toString id}.sock";
-  session   = "/home/${user}/rtorrent.dtach";
-  pidFile   = "/home/${user}/rtorrent.pid";
-  rtorrentRC = pkgs.writeText "rtorrent.rc" ''
+  bash        = "/run/current-system/sw/bin/bash";
+  chmod       = "/run/current-system/sw/bin/chmod";
+  peerPort    = 40000 + id;
+  dhtPort     = 41000 + id;
+  floodPort   = 42000 + id;
+  workingDir  = "/home/rtorrent/${toString id}";
+  rpcSocket   = "${workingDir}/rtorrent.sock";
+  session     = "${workingDir}/rtorrent.dtach";
+  pidFile     = "${workingDir}/rtorrent.pid";
+  rtorrentRC  = pkgs.writeText "rtorrent.rc" ''
     directory.default.set                 = /mnt/storage/rtorrent/data
-    session.path.set                      = ~
+    session.path.set                      = ${workingDir}
     network.scgi.open_local               = ${rpcSocket}
     throttle.global_down.max_rate.set_kb  = 9000
     throttle.global_up.max_rate.set_kb    = 500
@@ -32,40 +31,40 @@ in {
     allowedTCPPorts = [ peerPort floodPort ];
     allowedUDPPorts = [ dhtPort ];
   };
-  users.extraUsers."${user}" = {
-    uid = userID;
-    isNormalUser = true;
-    extraGroups = [ "storage" ];
-  };
   systemd.services = {
     "rtorrent-${toString id}" = let
-      rm        = "/run/current-system/sw/bin/rm";
       kill      = "/run/current-system/sw/bin/kill";
       dtach     = "${pkgs.dtach}/bin/dtach";
       rtorrent  = "${pkgs.rtorrent}/bin/rtorrent";
     in {
-      enable = true;
+      enable = enable;
+      preStart = ''
+        mkdir -m 0700 -p ${workingDir}
+        chown rtorrent ${workingDir}
+        if [ -f ${session} ]; then
+          rm ${session}
+        fi
+      '';
       serviceConfig = {
-        User = "${user}";
+        User = "rtorrent";
         Group = "storage";
         Type = "forking";
         KillMode = "none";
         ExecStop = "${bash} -c '${kill} -s 15 `cat ${pidFile}` || true'";
         ExecStart = "${dtach} -n ${session} -E -z ${rtorrent} -n -o import=${rtorrentRC}";
-        ExecStartPre = "${bash} -c 'if [ -f ${session} ]; then ${rm} ${session}; fi'";
         Restart = "on-failure";
       };
       environment = {
         TERM = "xterm";
       };
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "network.target" "local-fs.target" ];
     };
     "flood-${toString id}" = {
-      enable = true;
+      enable = enable;
       serviceConfig = {
-        User = "${user}";
-        WorkingDirectory = "/home/${user}";
+        User = "rtorrent";
+        WorkingDirectory = "${workingDir}";
         ExecStart = "${pkgs.nodejs}/bin/node ${flood}/server/bin/www";
         Restart = "on-failure";
       };
@@ -75,8 +74,7 @@ in {
         RTORRENT_SCGI_SOCKET  = rpcSocket;
       };
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "rtorrent-${toString id}.service" ];
     };
   };
 }
-
